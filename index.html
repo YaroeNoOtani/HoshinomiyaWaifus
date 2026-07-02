@@ -302,6 +302,11 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
 }
 .mini-card img{ width:64px; height:84px; object-fit:cover; border-radius:6px; box-shadow:0 3px 6px rgba(0,0,0,.25); }
 .mini-card .mini-name{ font-size:.62rem; margin-top:3px; font-family:var(--mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mini-grade-select{
+  width:64px; margin-top:3px; font-family:var(--mono); font-size:.6rem;
+  background:#fff; border:1px solid rgba(43,31,51,.2); border-radius:5px;
+  padding:2px 2px; color:var(--ink); cursor:pointer;
+}
 
 /* Compare */
 .compare-wrap{ display:flex; gap:24px; justify-content:center; align-items:stretch; flex-wrap:wrap; }
@@ -478,13 +483,13 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
 
   // ====== FIREBASE SETUP ======
   const firebaseConfig = {
-   apiKey: "AIzaSyDlMhpoVldjMVS1uW_JVb6BOWzxrC3r7XM",
+    apiKey: "AIzaSyDlMhpoVldjMVS1uW_JVb6BOWzxrC3r7XM",
     authDomain: "tierlistwaifus.firebaseapp.com",
     databaseURL: "https://tierlistwaifus-default-rtdb.asia-southeast1.firebasedatabase.app",
     projectId: "tierlistwaifus",
     storageBucket: "tierlistwaifus.firebasestorage.app",
     messagingSenderId: "521135132923",
-    appId: "1:521135132923:web:ac24d00c625d812cede05e"
+    appId: "1:521135132923:web:15550cb056c9c880ede05e"
   };
   const firebaseApp = initializeApp(firebaseConfig);
   const db = getDatabase(firebaseApp);
@@ -873,17 +878,32 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
       el.draggable = true;
       el.dataset.id = w.id;
       const img = w.image
-        ? `<img src="${escapeAttr(w.image)}" onerror="this.style.background='#ccc'">`
+        ? `<img src="${escapeAttr(w.image)}" draggable="false" onerror="this.style.background='#ccc'">`
         : `<div style="width:64px;height:84px;background:var(--page-cream);border-radius:6px;display:flex;align-items:center;justify-content:center;font-family:var(--display);color:#999;">${escapeHtml((w.name||'?').charAt(0))}</div>`;
-      el.innerHTML = `${img}<div class="mini-name">${escapeHtml(w.name)}</div>`;
+      const selectOptions = TIERS.map(t=>`<option value="${t}" ${t===tier?'selected':''}>${t}</option>`).join('');
+      el.innerHTML = `${img}<div class="mini-name">${escapeHtml(w.name)}</div><select class="mini-grade-select">${selectOptions}</select>`;
       el.addEventListener('dragstart', e=>{
+        e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', w.id);
+      });
+      el.querySelector('.mini-grade-select').addEventListener('change', async e=>{
+        e.stopPropagation();
+        const newTier = e.target.value;
+        if(!tierlists[activeTierlistId]) return;
+        if(newTier==='Unranked'){
+          delete tierlists[activeTierlistId].grades[w.id];
+        } else {
+          tierlists[activeTierlistId].grades[w.id] = newTier;
+        }
+        await saveTierlists();
+        renderTier();
       });
       body.appendChild(el);
     });
 
     container.querySelectorAll('.tier-body').forEach(body=>{
-      body.addEventListener('dragover', e=>{ e.preventDefault(); body.classList.add('dragover'); });
+      body.addEventListener('dragenter', e=>{ e.preventDefault(); });
+      body.addEventListener('dragover', e=>{ e.preventDefault(); e.dataTransfer.dropEffect = 'move'; body.classList.add('dragover'); });
       body.addEventListener('dragleave', ()=> body.classList.remove('dragover'));
       body.addEventListener('drop', async e=>{
         e.preventDefault();
