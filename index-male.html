@@ -302,11 +302,6 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
 }
 .mini-card img{ width:64px; height:84px; object-fit:cover; border-radius:6px; box-shadow:0 3px 6px rgba(0,0,0,.25); }
 .mini-card .mini-name{ font-size:.62rem; margin-top:3px; font-family:var(--mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.mini-grade-select{
-  width:64px; margin-top:3px; font-family:var(--mono); font-size:.6rem;
-  background:#fff; border:1px solid rgba(43,31,51,.2); border-radius:5px;
-  padding:2px 2px; color:var(--ink); cursor:pointer;
-}
 
 /* Compare */
 .compare-wrap{ display:flex; gap:24px; justify-content:center; align-items:stretch; flex-wrap:wrap; }
@@ -880,23 +875,10 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
       const img = w.image
         ? `<img src="${escapeAttr(w.image)}" draggable="false" onerror="this.style.background='#ccc'">`
         : `<div style="width:64px;height:84px;background:var(--page-cream);border-radius:6px;display:flex;align-items:center;justify-content:center;font-family:var(--display);color:#999;">${escapeHtml((w.name||'?').charAt(0))}</div>`;
-      const selectOptions = TIERS.map(t=>`<option value="${t}" ${t===tier?'selected':''}>${t}</option>`).join('');
-      el.innerHTML = `${img}<div class="mini-name">${escapeHtml(w.name)}</div><select class="mini-grade-select">${selectOptions}</select>`;
+      el.innerHTML = `${img}<div class="mini-name">${escapeHtml(w.name)}</div>`;
       el.addEventListener('dragstart', e=>{
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', w.id);
-      });
-      el.querySelector('.mini-grade-select').addEventListener('change', async e=>{
-        e.stopPropagation();
-        const newTier = e.target.value;
-        if(!tierlists[activeTierlistId]) return;
-        if(newTier==='Unranked'){
-          delete tierlists[activeTierlistId].grades[w.id];
-        } else {
-          tierlists[activeTierlistId].grades[w.id] = newTier;
-        }
-        await saveTierlists();
-        renderTier();
       });
       body.appendChild(el);
     });
@@ -911,6 +893,7 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
         const id = e.dataTransfer.getData('text/plain');
         const w = waifus.find(x=>x.id===id);
         if(w && tierlists[activeTierlistId]){
+          if(!tierlists[activeTierlistId].grades) tierlists[activeTierlistId].grades = {};
           if(body.dataset.tier==='Unranked'){
             delete tierlists[activeTierlistId].grades[id];
           } else {
