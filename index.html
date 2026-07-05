@@ -71,6 +71,19 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
   text-decoration:none; opacity:.75; transition:.15s;
 }
 .page-switch-btn:hover{ opacity:1; background:rgba(201,160,77,.18); }
+.account-bar{
+  position:absolute; top:44px; right:16px;
+  font-family:var(--mono); font-size:.66rem; color:var(--gold-light);
+  display:flex; align-items:center; gap:8px; opacity:.85;
+}
+.admin-badge{
+  background:var(--rose); color:#fff; padding:2px 7px; border-radius:999px; font-weight:700; letter-spacing:.5px;
+}
+.logout-btn{
+  background:transparent; border:1px solid rgba(201,160,77,.3); color:var(--gold-light);
+  font-family:var(--mono); font-size:.62rem; padding:3px 9px; border-radius:999px; cursor:pointer;
+}
+.logout-btn:hover{ background:rgba(201,160,77,.18); }
 .tierlist-toolbar select#tierlistSelect{
   font-family:var(--body); background:var(--page-cream-2); border:1px solid rgba(43,31,51,.2);
   padding:9px 14px; border-radius:8px; font-size:.9rem; color:var(--ink); min-width:160px;
@@ -347,10 +360,30 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
 </head>
 <body>
 
+<div class="modal-overlay" id="authOverlay">
+  <div class="modal" style="max-width:380px;">
+    <h2 id="authTitle" style="margin-top:0;">Log in</h2>
+    <div class="field">
+      <label>Email</label>
+      <input type="text" id="authEmail" placeholder="you@example.com">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="authPassword" placeholder="••••••••">
+    </div>
+    <p id="authError" style="color:var(--rose-deep); font-size:.82rem; display:none;"></p>
+    <div class="modal-actions" style="justify-content:space-between;">
+      <button class="btn btn-ghost" id="authToggleModeBtn">Need an account? Sign up</button>
+      <button class="btn btn-gold" id="authSubmitBtn">Log in</button>
+    </div>
+  </div>
+</div>
+
 <div id="app">
   <div class="binder">
     <div class="cover-header">
       <a href="index-male.html" class="page-switch-btn">♂ male page</a>
+      <div id="accountBar" class="account-bar"></div>
       <h1>My Collection</h1>
       <div class="sub">a personal archive — anime · manga · games · light novels</div>
     </div>
@@ -492,7 +525,8 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
-  import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-database.js";
+  import { getDatabase, ref, set, onValue, get } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-database.js";
+  import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
 
   // ====== FIREBASE SETUP ======
   const firebaseConfig = {
@@ -506,13 +540,15 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
   };
   const firebaseApp = initializeApp(firebaseConfig);
   const db = getDatabase(firebaseApp);
+  const auth = getAuth(firebaseApp);
   const dbRef = ref(db, 'collection');
   const tierlistsRef = ref(db, 'tierlists');
   // ====== END FIREBASE SETUP ======
 
 (function(){
   let waifus = [];
-  let tierlists = {}; // { id: { name, grades: { charId: 'S'|'A'|'B'|'C'|'D'|'E'|'F' } } }
+  let tierlists = {}; // { id: { name, ownerId, grades: { charId: 'S'|'A'|'B'|'C'|'D'|'E'|'F' } } }
+  let currentUser = null; // { uid, email, isAdmin }
   let activeTierlistId = null;
   let currentStars = 0;
   let compareA = null, compareB = null;
@@ -891,23 +927,33 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
   });
 
   function ensureDefaultTierlist(){
-    if(Object.keys(tierlists).length===0){
+    if(Object.keys(tierlists).length===0 && currentUser){
       const id = uid();
       const grades = {};
       // migrate any legacy per-character tier field, if present
       waifus.forEach(w=>{
         if(w.tier && GRADES.includes(w.tier)) grades[w.id] = w.tier;
       });
-      tierlists[id] = { name:'My Tier List', grades };
+      tierlists[id] = { name:'My Tier List', ownerId: currentUser.uid, grades };
       activeTierlistId = id;
       saveTierlists();
     }
   }
 
+  function canManageTierlist(list){
+    if(!currentUser || !list) return false;
+    if(currentUser.isAdmin) return true;
+    if(!list.ownerId) return true; // legacy unowned tier lists remain editable by anyone logged in
+    return list.ownerId === currentUser.uid;
+  }
+
   function renderTierlistSelect(){
     const sel = $('#tierlistSelect');
     const ids = Object.keys(tierlists);
-    sel.innerHTML = ids.map(id=>`<option value="${id}">${escapeHtml(tierlists[id].name)}</option>`).join('');
+    sel.innerHTML = ids.map(id=>{
+      const owned = tierlists[id].ownerId === (currentUser && currentUser.uid);
+      return `<option value="${id}">${escapeHtml(tierlists[id].name)}${owned ? ' (yours)' : ''}</option>`;
+    }).join('');
     if(activeTierlistId) sel.value = activeTierlistId;
   }
 
@@ -915,11 +961,16 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
     ensureDefaultTierlist();
     if(!activeTierlistId){
       $('#tierContainer').innerHTML = `<div class="empty-state">Create a tier list to get started.</div>`;
+      $('#renameTierlistBtn').style.display = 'none';
+      $('#deleteTierlistBtn').style.display = 'none';
       return;
     }
     renderTierlistSelect();
     const list = tierlists[activeTierlistId];
     const grades = list ? list.grades || {} : {};
+    const canManage = canManageTierlist(list);
+    $('#renameTierlistBtn').style.display = canManage ? 'inline-block' : 'none';
+    $('#deleteTierlistBtn').style.display = canManage ? 'inline-block' : 'none';
 
     const container = $('#tierContainer');
     container.innerHTML = TIERS.map(t=>`
@@ -934,26 +985,29 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
       const body = container.querySelector(`.tier-body[data-tier="${tier}"]`);
       const el = document.createElement('div');
       el.className = 'mini-card';
-      el.draggable = true;
+      el.draggable = canManage;
       el.dataset.id = w.id;
       const img = w.image
         ? `<img src="${escapeAttr(w.image)}" draggable="false" onerror="this.style.background='#ccc'">`
         : `<div style="width:64px;height:84px;background:var(--page-cream);border-radius:6px;display:flex;align-items:center;justify-content:center;font-family:var(--display);color:#999;">${escapeHtml((w.name||'?').charAt(0))}</div>`;
       el.innerHTML = `${img}<div class="mini-name">${escapeHtml(w.name)}</div>`;
-      el.addEventListener('dragstart', e=>{
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', w.id);
-        isDraggingCard = true;
-      });
-      el.addEventListener('dragend', ()=>{
-        isDraggingCard = false;
-        $('#scrollHintTop').style.opacity = 0;
-        $('#scrollHintBottom').style.opacity = 0;
-      });
+      if(canManage){
+        el.addEventListener('dragstart', e=>{
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', w.id);
+          isDraggingCard = true;
+        });
+        el.addEventListener('dragend', ()=>{
+          isDraggingCard = false;
+          $('#scrollHintTop').style.opacity = 0;
+          $('#scrollHintBottom').style.opacity = 0;
+        });
+      }
       body.appendChild(el);
     });
 
     container.querySelectorAll('.tier-body').forEach(body=>{
+      if(!canManage) return; // viewers can look, but can't rearrange someone else's tier list
       body.addEventListener('dragenter', e=>{ e.preventDefault(); });
       body.addEventListener('dragover', e=>{ e.preventDefault(); e.dataTransfer.dropEffect = 'move'; body.classList.add('dragover'); });
       body.addEventListener('dragleave', ()=> body.classList.remove('dragover'));
@@ -962,7 +1016,7 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
         body.classList.remove('dragover');
         const id = e.dataTransfer.getData('text/plain');
         const w = waifus.find(x=>x.id===id);
-        if(w && tierlists[activeTierlistId]){
+        if(w && tierlists[activeTierlistId] && canManageTierlist(tierlists[activeTierlistId])){
           if(!tierlists[activeTierlistId].grades) tierlists[activeTierlistId].grades = {};
           if(body.dataset.tier==='Unranked'){
             delete tierlists[activeTierlistId].grades[id];
@@ -982,10 +1036,18 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
   });
 
   $('#newTierlistBtn').addEventListener('click', async ()=>{
+    if(!currentUser) return;
+    if(!currentUser.isAdmin){
+      const alreadyOwns = Object.values(tierlists).some(l=>l.ownerId===currentUser.uid);
+      if(alreadyOwns){
+        alert('You already have a tier list. Each account gets one — you can rename it instead if you want a different focus.');
+        return;
+      }
+    }
     const name = prompt('Name this tier list (e.g. "Best fights", "Cutest smiles"):');
     if(!name || !name.trim()) return;
     const id = uid();
-    tierlists[id] = { name: name.trim(), grades:{} };
+    tierlists[id] = { name: name.trim(), ownerId: currentUser.uid, grades:{} };
     activeTierlistId = id;
     await saveTierlists();
     renderTier();
@@ -993,6 +1055,7 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
 
   $('#renameTierlistBtn').addEventListener('click', async ()=>{
     if(!activeTierlistId || !tierlists[activeTierlistId]) return;
+    if(!canManageTierlist(tierlists[activeTierlistId])) return;
     const name = prompt('New name for this tier list:', tierlists[activeTierlistId].name);
     if(!name || !name.trim()) return;
     tierlists[activeTierlistId].name = name.trim();
@@ -1002,6 +1065,7 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
 
   $('#deleteTierlistBtn').addEventListener('click', async ()=>{
     if(!activeTierlistId || !tierlists[activeTierlistId]) return;
+    if(!canManageTierlist(tierlists[activeTierlistId])) return;
     if(!confirm(`Delete tier list "${tierlists[activeTierlistId].name}"? This can't be undone.`)) return;
     delete tierlists[activeTierlistId];
     const ids = Object.keys(tierlists);
@@ -1069,8 +1133,74 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
     renderGrid();
   }
 
-  loadData();
-  loadTierlists();
+  // ---------- AUTH ----------
+  let authMode = 'login'; // 'login' | 'signup'
+
+  function setAuthError(msg){
+    const el = $('#authError');
+    if(msg){ el.textContent = msg; el.style.display = 'block'; }
+    else { el.style.display = 'none'; }
+  }
+
+  $('#authToggleModeBtn').addEventListener('click', ()=>{
+    authMode = authMode==='login' ? 'signup' : 'login';
+    $('#authTitle').textContent = authMode==='login' ? 'Log in' : 'Sign up';
+    $('#authSubmitBtn').textContent = authMode==='login' ? 'Log in' : 'Sign up';
+    $('#authToggleModeBtn').textContent = authMode==='login' ? 'Need an account? Sign up' : 'Already have an account? Log in';
+    setAuthError(null);
+  });
+
+  $('#authSubmitBtn').addEventListener('click', async ()=>{
+    const email = $('#authEmail').value.trim();
+    const password = $('#authPassword').value;
+    if(!email || !password){ setAuthError('Enter both an email and a password.'); return; }
+    setAuthError(null);
+    try{
+      if(authMode==='signup'){
+        await createUserWithEmailAndPassword(auth, email, password);
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+    }catch(err){
+      setAuthError(err.message.replace('Firebase: ','').replace(/\(auth\/[^)]+\)\.?/,'').trim());
+    }
+  });
+
+  async function ensureUserProfile(user){
+    const userRef = ref(db, 'users/' + user.uid);
+    const snap = await get(userRef);
+    if(!snap.exists()){
+      const profile = { email: user.email, isAdmin: false };
+      await set(userRef, profile);
+      return profile;
+    }
+    return snap.val();
+  }
+
+  function renderAccountBar(){
+    if(!currentUser) { $('#accountBar').innerHTML = ''; return; }
+    $('#accountBar').innerHTML = `
+      ${currentUser.isAdmin ? '<span class="admin-badge">ADMIN</span>' : ''}
+      <span>${escapeHtml(currentUser.email)}</span>
+      <button class="logout-btn" id="logoutBtn">Log out</button>
+    `;
+    $('#logoutBtn').addEventListener('click', ()=> signOut(auth));
+  }
+
+  onAuthStateChanged(auth, async (user)=>{
+    if(user){
+      const profile = await ensureUserProfile(user);
+      currentUser = { uid: user.uid, email: user.email, isAdmin: !!profile.isAdmin };
+      $('#authOverlay').classList.add('hidden');
+      renderAccountBar();
+      loadData();
+      loadTierlists();
+    } else {
+      currentUser = null;
+      $('#authOverlay').classList.remove('hidden');
+      renderAccountBar();
+    }
+  });
 })();
 </script>
 </body>
