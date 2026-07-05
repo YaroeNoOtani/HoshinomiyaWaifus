@@ -594,6 +594,34 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
     });
   }
 
+  // Targeted writes: touch only the specific tier list being changed, not the whole collection.
+  // This matters because per-owner security rules are evaluated per tier list — overwriting
+  // the entire collection at once requires every OTHER tier list to also pass its own rule check.
+  function saveOneTierlist(id){
+    return set(ref(db, 'tierlists_male/' + id), tierlists[id]).catch(err=>{
+      console.error('Firebase tier list save failed', err);
+      alert('Could not save the tier list. Check your Firebase config and database rules.');
+    });
+  }
+  function deleteOneTierlist(id){
+    return set(ref(db, 'tierlists_male/' + id), null).catch(err=>{
+      console.error('Firebase tier list delete failed', err);
+      alert('Could not delete the tier list. Check your Firebase config and database rules.');
+    });
+  }
+  function saveOneGrade(id, charId, grade){
+    return set(ref(db, 'tierlists_male/' + id + '/grades/' + charId), grade).catch(err=>{
+      console.error('Firebase grade save failed', err);
+      alert('Could not save that change. Check your Firebase config and database rules.');
+    });
+  }
+  function saveOneTierlistName(id, name){
+    return set(ref(db, 'tierlists_male/' + id + '/name'), name).catch(err=>{
+      console.error('Firebase tier list rename failed', err);
+      alert('Could not rename the tier list. Check your Firebase config and database rules.');
+    });
+  }
+
   function uid(){ return 'w_' + Date.now() + '_' + Math.random().toString(36).slice(2,8); }
 
   function placeholderImg(name){
@@ -936,7 +964,7 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
       });
       tierlists[id] = { name:'My Tier List', ownerId: currentUser.uid, grades };
       activeTierlistId = id;
-      saveTierlists();
+      saveOneTierlist(id);
     }
   }
 
@@ -1018,12 +1046,13 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
         const w = waifus.find(x=>x.id===id);
         if(w && tierlists[activeTierlistId] && canManageTierlist(tierlists[activeTierlistId])){
           if(!tierlists[activeTierlistId].grades) tierlists[activeTierlistId].grades = {};
-          if(body.dataset.tier==='Unranked'){
+          const newGrade = body.dataset.tier==='Unranked' ? null : body.dataset.tier;
+          if(newGrade===null){
             delete tierlists[activeTierlistId].grades[id];
           } else {
-            tierlists[activeTierlistId].grades[id] = body.dataset.tier;
+            tierlists[activeTierlistId].grades[id] = newGrade;
           }
-          await saveTierlists();
+          await saveOneGrade(activeTierlistId, id, newGrade);
           renderTier();
         }
       });
@@ -1049,7 +1078,7 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
     const id = uid();
     tierlists[id] = { name: name.trim(), ownerId: currentUser.uid, grades:{} };
     activeTierlistId = id;
-    await saveTierlists();
+    await saveOneTierlist(id);
     renderTier();
   });
 
@@ -1059,7 +1088,7 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
     const name = prompt('New name for this tier list:', tierlists[activeTierlistId].name);
     if(!name || !name.trim()) return;
     tierlists[activeTierlistId].name = name.trim();
-    await saveTierlists();
+    await saveOneTierlistName(activeTierlistId, name.trim());
     renderTier();
   });
 
@@ -1067,10 +1096,11 @@ html,body{margin:0;padding:0;background:var(--cover-dark);font-family:var(--body
     if(!activeTierlistId || !tierlists[activeTierlistId]) return;
     if(!canManageTierlist(tierlists[activeTierlistId])) return;
     if(!confirm(`Delete tier list "${tierlists[activeTierlistId].name}"? This can't be undone.`)) return;
-    delete tierlists[activeTierlistId];
+    const idToDelete = activeTierlistId;
+    delete tierlists[idToDelete];
     const ids = Object.keys(tierlists);
     activeTierlistId = ids.length ? ids[0] : null;
-    await saveTierlists();
+    await deleteOneTierlist(idToDelete);
     renderTier();
   });
 
